@@ -1,0 +1,92 @@
+name: 인스타에 올리기
+
+# 2026-10-15 사장님 지시: "사진은 인스타 올릴 때만 공개했다가 올리고 나면 완전 삭제, 기록도 안 남게".
+# 사진은 비공개 작업실(bichae-studio)에서 이 실행 안으로만 받고, 저장소에 커밋하지 않는다.
+# 실제 게시 때만 공개 주소(Pages)에 잠깐 내놓고, 끝나면(성공·실패 모두) 빈 페이지로 덮고 올렸던 파일 묶음도 지운다.
+
+on:
+  workflow_dispatch:
+    inputs:
+      id:
+        description: "묶음 번호 (텔레그램에 온 번호. 비우면 가장 최근 것)"
+        required: false
+        default: ""
+      confirm:
+        description: "실제로 올리려면 '올립니다'를 고르세요"
+        required: true
+        type: choice
+        default: "연습"
+        options: ["연습", "올립니다"]
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+  actions: write
+
+concurrency:
+  group: bichae-post
+  cancel-in-progress: false
+
+jobs:
+  post:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment: github-pages
+    env:
+      TZ: Asia/Seoul
+      IN_ID: ${{ inputs.id }}
+      IN_CONFIRM: ${{ inputs.confirm }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: 작업실에서 사진 받기
+        id: fetch
+        env:
+          STUDIO_TOKEN: ${{ secrets.STUDIO_TOKEN }}
+        run: python fetch.py "$IN_ID" site work
+      - name: 연습 점검
+        if: inputs.confirm == '연습'
+        env:
+          IG_ACCESS_TOKEN: ${{ secrets.IG_ACCESS_TOKEN }}
+        run: python publish.py --dir work --base "-" --mode 연습
+      - name: 사진 잠깐 공개
+        if: inputs.confirm == '올립니다'
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+          retention-days: 1
+      - name: 공개 주소 반영
+        if: inputs.confirm == '올립니다'
+        uses: actions/deploy-pages@v4
+      - name: 인스타에 올리기
+        if: inputs.confirm == '올립니다'
+        env:
+          IG_ACCESS_TOKEN: ${{ secrets.IG_ACCESS_TOKEN }}
+        run: python publish.py --dir work --base "https://butonco00-ux.github.io/bichae-cards/${{ steps.fetch.outputs.name }}" --mode 실제 --confirm 올립니다
+      - name: 빈 페이지로 덮기
+        if: always() && inputs.confirm == '올립니다'
+        run: rm -rf site work && mkdir empty && touch empty/index.html
+      - name: 빈 페이지 묶음
+        if: always() && inputs.confirm == '올립니다'
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: empty
+          name: empty-page
+          retention-days: 1
+      - name: 빈 페이지 반영(사진 공개 끝)
+        if: always() && inputs.confirm == '올립니다'
+        uses: actions/deploy-pages@v4
+        with:
+          artifact_name: empty-page
+      - name: 올렸던 파일 묶음 지우기
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          for a in $(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/artifacts" --jq '.artifacts[].id'); do
+            gh api -X DELETE "repos/$GITHUB_REPOSITORY/actions/artifacts/$a"
+          done
+          echo "파일 묶음 정리 끝"

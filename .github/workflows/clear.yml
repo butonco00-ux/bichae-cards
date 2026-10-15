@@ -1,0 +1,30 @@
+name: 공개 주소 비우기
+
+# 공개 주소(Pages)를 빈 페이지로 덮는다. 게시 도중 멈춰 사진이 남았을 때 손으로 실행(2026-10-15).
+
+on:
+  workflow_dispatch:
+
+permissions:
+  pages: write
+  id-token: write
+  actions: write
+
+jobs:
+  clear:
+    runs-on: ubuntu-latest
+    environment: github-pages
+    steps:
+      - run: mkdir empty && touch empty/index.html
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: empty
+          retention-days: 1
+      - uses: actions/deploy-pages@v4
+      - name: 파일 묶음 지우기
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          for a in $(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/artifacts" --jq '.artifacts[].id'); do
+            gh api -X DELETE "repos/$GITHUB_REPOSITORY/actions/artifacts/$a"
+          done
